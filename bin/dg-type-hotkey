@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -u
+
+export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
+if [[ -n "${DISPLAY:-}" ]]; then
+  export GDK_BACKEND="${GDK_BACKEND:-x11}"
+fi
+
+log_dir="$HOME/.cache/dg-type"
+log_file="$log_dir/hotkey.log"
+mkdir -p "$log_dir"
+
+notify() {
+  if command -v notify-send >/dev/null 2>&1; then
+    notify-send -t 2500 -h string:x-canonical-private-synchronous:dg-type-hotkey \
+      -i audio-input-microphone "dg-type" "$1"
+  fi
+}
+
+run_direct() {
+  DG_TYPE_LOG_EVENTS=1 "$HOME/.local/bin/dg-type" \
+    --live --delay 0 --silence-timeout 15 --no-auto-setup >>"$log_file" 2>&1
+}
+
+run_distrobox() {
+  "$HOME/.local/bin/distrobox-enter" --name fedora --no-tty -- \
+    /usr/bin/env DG_TYPE_LOG_EVENTS=1 "$HOME/.local/bin/dg-type" \
+      --live --delay 0 --silence-timeout 15 --no-auto-setup >>"$log_file" 2>&1
+}
+
+{
+  printf '\n[%s] dg-type-hotkey invoked\n' "$(date -Is)"
+
+  if [[ ! -x "$HOME/.local/bin/dg-type" ]]; then
+    printf 'missing executable: %s\n' "$HOME/.local/bin/dg-type"
+    notify "dg-type is missing"
+    exit 127
+  fi
+
+  if [[ -S "$XDG_RUNTIME_DIR/.ydotool_socket" ]]; then
+    printf 'ydotool socket: %s\n' "$XDG_RUNTIME_DIR/.ydotool_socket"
+  else
+    printf 'ydotool socket missing: %s\n' "$XDG_RUNTIME_DIR/.ydotool_socket"
+    notify "Run dg-type --setup-injector first"
+    exit 1
+  fi
+
+  if [[ -x "$HOME/.local/bin/distrobox-enter" ]] && run_distrobox; then
+    exit 0
+  fi
+
+  printf 'distrobox run failed; trying direct fallback\n'
+
+  if run_direct; then
+    exit 0
+  fi
+
+  notify "dg-type hotkey failed; see ~/.cache/dg-type/hotkey.log"
+  exit 1
+} >>"$log_file" 2>&1

@@ -1,0 +1,414 @@
+#!/usr/bin/env python3
+"""whisrs-style bottom OSD overlay for dg-type.
+
+Visual design and animation constants are adapted from y0sif/whisrs
+<https://github.com/y0sif/whisrs>, MIT License.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import os
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+# KDE Wayland does not let ordinary GTK Wayland toplevels position
+# themselves. XWayland does, and a popup window avoids titlebar/buttons.
+if os.environ.get("DISPLAY"):
+    os.environ.setdefault("GDK_BACKEND", "x11")
+
+import cairo
+import gi
+
+gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
+from gi.repository import Gdk, GLib, Gtk
+
+
+UID = os.getuid()
+STATE_PATH = Path(f"/tmp/dg-type-overlay-{UID}.json")
+PID_PATH = Path(f"/tmp/dg-type-overlay-{UID}.pid")
+
+WIDTH = int(os.environ.get("DG_TYPE_OVERLAY_WIDTH", "100"))
+HEIGHT = int(os.environ.get("DG_TYPE_OVERLAY_HEIGHT", "40"))
+BOTTOM_MARGIN = int(os.environ.get("DG_TYPE_OVERLAY_BOTTOM_MARGIN", "72"))
+
+SPAWN_IN_MS = 220.0
+SPAWN_OUT_MS = 140.0
+SPAWN_PILL_MIN_H = 4.0
+SPAWN_OVERSHOOT_C = 0.4
+BARS_GRACE_MS = 80.0
+BARS_FADE_MS = 80.0
+
+BAR_COUNT = 7
+BAR_W = 3.0
+BAR_GAP = 2.0
+BAR_PITCH = BAR_W + BAR_GAP
+BAR_BLOCK_W = BAR_COUNT * BAR_W + (BAR_COUNT - 1) * BAR_GAP
+BAR_BASELINE = 6.0
+BAR_VPAD = 6.0
+
+
+@dataclass(frozen=True)
+class Theme:
+    bg: tuple[float, float, float, float]
+    ring: tuple[float, float, float, float]
+    rec_bar: tuple[float, float, float, float]
+    trans_bar: tuple[float, float, float, float]
+    glow: tuple[float, float, float, float]
+
+
+THEMES = {
+    "carbon": Theme(
+        bg=(14 / 255, 14 / 255, 16 / 255, 0.92),
+        ring=(58 / 255, 58 / 255, 64 / 255, 0.0),
+        rec_bar=(240 / 255, 237 / 255, 245 / 255, 1.0),
+        trans_bar=(156 / 255, 163 / 255, 175 / 255, 1.0),
+        glow=(240 / 255, 237 / 255, 245 / 255, 0.16),
+    ),
+    "ember": Theme(
+        bg=(14 / 255, 14 / 255, 16 / 255, 0.92),
+        ring=(249 / 255, 115 / 255, 22 / 255, 0.0),
+        rec_bar=(249 / 255, 115 / 255, 22 / 255, 1.0),
+        trans_bar=(240 / 255, 237 / 255, 245 / 255, 1.0),
+        glow=(249 / 255, 115 / 255, 22 / 255, 0.24),
+    ),
+    "cyan": Theme(
+        bg=(10 / 255, 15 / 255, 20 / 255, 0.92),
+        ring=(34 / 255, 211 / 255, 238 / 255, 0.0),
+        rec_bar=(34 / 255, 211 / 255, 238 / 255, 1.0),
+        trans_bar=(56 / 255, 189 / 255, 248 / 255, 1.0),
+        glow=(34 / 255, 211 / 255, 238 / 255, 0.20),
+    ),
+}
+
+
+def theme() -> Theme:
+    return THEMES.get(os.environ.get("DG_TYPE_OVERLAY_THEME", "carbon"), THEMES["carbon"])
+
+
+def ease_in_cubic(t: float) -> float:
+    return t * t * t
+
+
+def ease_out_back(t: float, c: float) -> float:
+    t1 = t - 1.0
+    return 1.0 + (c + 1.0) * t1 * t1 * t1 + c * t1 * t1
+
+
+def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
+    return max(low, min(high, value))
+
+
+def taper_factor(index: int, count: int) -> float:
+    if count <= 1:
+        return 1.0
+    center = (count - 1) / 2.0
+    distance = (index - center) / center
+    envelope = math.exp(-(distance * distance))
+    wave = 0.75 + 0.25 * math.cos(math.pi * (index - center))
+    return envelope * wave
+
+
+def rounded_rect(cr: cairo.Context, x: float, y: float, width: float, height: float, radius: float):
+    radius = min(radius, width / 2.0, height / 2.0)
+    cr.new_sub_path()
+    cr.arc(x + width - radius, y + radius, radius, -math.pi / 2, 0)
+    cr.arc(x + width - radius, y + height - radius, radius, 0, math.pi / 2)
+    cr.arc(x + radius, y + height - radius, radius, math.pi / 2, math.pi)
+    cr.arc(x + radius, y + radius, radius, math.pi, 3 * math.pi / 2)
+    cr.close_path()
+
+
+class Overlay(Gtk.Window):
+    def __init__(self):
+        super().__init__(type=Gtk.WindowType.POPUP)
+        self.set_decorated(False)
+        self.set_resizable(False)
+        self.set_accept_focus(False)
+        self.set_focus_on_map(False)
+        self.set_skip_taskbar_hint(True)
+        self.set_skip_pager_hint(True)
+        self.set_keep_above(True)
+        self.stick()
+        self.set_type_hint(Gdk.WindowTypeHint.NOTIFICATION)
+        self.set_app_paintable(True)
+        self.set_name("dg-type-overlay")
+
+        screen = self.get_screen()
+        visual = screen.get_rgba_visual()
+        if visual:
+            self.set_visual(visual)
+
+        self.theme = theme()
+        self.state = "idle"
+        self.visible_state = "idle"
+        self.target_visible = False
+        self.spawn_in = False
+        self.spawn_started = time.monotonic()
+        self.last_mtime = 0.0
+        self.stop_after = 0.0
+        self.frame = 0
+        self.level = 0.0
+        self.level_target = 0.0
+        self.level_velocity = 0.0
+        self.last_update = time.monotonic()
+
+        self.area = Gtk.DrawingArea()
+        self.area.set_size_request(WIDTH, HEIGHT)
+        self.area.connect("draw", self.draw)
+        self.add(self.area)
+
+        self.connect("realize", self.place_bottom_center)
+        self.connect("destroy", Gtk.main_quit)
+
+        GLib.timeout_add(16, self.tick)
+        GLib.timeout_add(33, self.poll_state)
+
+    def place_bottom_center(self, *_args):
+        screen = self.get_screen()
+        display = screen.get_display()
+        seat = display.get_default_seat()
+        pointer = seat.get_pointer() if seat else None
+        monitor_num = 0
+        if pointer:
+            _screen, x, y = pointer.get_position()
+            monitor_num = screen.get_monitor_at_point(x, y)
+        monitor = screen.get_monitor_geometry(max(0, monitor_num))
+        x = monitor.x + int((monitor.width - WIDTH) / 2)
+        y = monitor.y + monitor.height - HEIGHT - BOTTOM_MARGIN
+        self.move(x, y)
+
+    def set_visible_target(self, visible: bool, state: str):
+        was_visible = self.target_visible
+        self.target_visible = visible
+        if visible:
+            self.visible_state = state
+            self.stop_after = 0.0
+            if not self.get_visible():
+                self.show_all()
+                self.place_bottom_center()
+
+        if was_visible != visible:
+            self.spawn_in = visible
+            self.spawn_started = time.monotonic()
+
+    def poll_state(self):
+        try:
+            stat = STATE_PATH.stat()
+        except FileNotFoundError:
+            return True
+
+        if stat.st_mtime <= self.last_mtime:
+            return True
+
+        self.last_mtime = stat.st_mtime
+
+        try:
+            payload = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return True
+
+        state = str(payload.get("state", "idle"))
+        self.level_target = clamp(float(payload.get("level", self.level_target)))
+
+        if state in {"listening", "transcribing"}:
+            self.state = "recording"
+            self.set_visible_target(True, "recording")
+        elif state == "final":
+            self.state = "transcribing"
+            self.set_visible_target(True, "transcribing")
+        elif state == "error":
+            self.state = "transcribing"
+            self.set_visible_target(True, "transcribing")
+            self.stop_after = time.time() + 0.9
+        elif state == "stopped":
+            self.state = "idle"
+            self.set_visible_target(False, "idle")
+            self.stop_after = time.time() + 0.9
+
+        return True
+
+    def spawn_t(self) -> float:
+        duration = SPAWN_IN_MS if self.spawn_in else SPAWN_OUT_MS
+        elapsed_ms = (time.monotonic() - self.spawn_started) * 1000.0
+        return clamp(elapsed_ms / duration)
+
+    def anim(self):
+        full_height = float(HEIGHT)
+        t = self.spawn_t()
+        if self.spawn_in:
+            h_curve = clamp(ease_out_back(t, SPAWN_OVERSHOOT_C), 0.0, 1.4)
+            pill_height = SPAWN_PILL_MIN_H + h_curve * (full_height - SPAWN_PILL_MIN_H)
+            alpha_t = clamp(t / 0.64)
+            pill_alpha = 1.0 - (1.0 - alpha_t) * (1.0 - alpha_t)
+            grace_t = BARS_GRACE_MS / SPAWN_IN_MS
+            fade_t = BARS_FADE_MS / SPAWN_IN_MS
+            bar_t = clamp((t - grace_t) / fade_t)
+            bar_alpha = 1.0 - (1.0 - bar_t) * (1.0 - bar_t)
+            bars_locked = t < grace_t + fade_t
+        else:
+            eased = ease_in_cubic(t)
+            pill_height = full_height - eased * (full_height - SPAWN_PILL_MIN_H)
+            pill_alpha = 1.0 - eased
+            bar_t = clamp(t / 0.7)
+            bar_alpha = 1.0 - bar_t * bar_t
+            bars_locked = True
+        return pill_height, pill_alpha, bar_alpha, bars_locked
+
+    def update_level_spring(self):
+        now = time.monotonic()
+        dt = min(now - self.last_update, 0.1)
+        self.last_update = now
+        if dt <= 0:
+            return
+        stiffness = 360.0
+        damping = 32.0
+        force = (self.level_target - self.level) * stiffness
+        drag = self.level_velocity * damping
+        self.level_velocity += (force - drag) * dt
+        self.level = clamp(self.level + self.level_velocity * dt)
+
+    def tick(self):
+        self.update_level_spring()
+        self.frame += 1
+
+        if not self.spawn_in and self.spawn_t() >= 1.0:
+            self.visible_state = "idle"
+
+        if self.stop_after and time.time() >= self.stop_after and self.visible_state == "idle":
+            Gtk.main_quit()
+            return False
+
+        self.area.queue_draw()
+        return True
+
+    def draw(self, _widget, cr):
+        cr.set_operator(cairo.OPERATOR_CLEAR)
+        cr.paint()
+        cr.set_operator(cairo.OPERATOR_OVER)
+
+        pill_height, pill_alpha, bar_alpha, bars_locked = self.anim()
+        if pill_alpha <= 0 or self.visible_state == "idle":
+            return False
+
+        pill_height = max(SPAWN_PILL_MIN_H, min(float(HEIGHT), pill_height))
+        pill_y = HEIGHT - pill_height
+
+        rounded_rect(cr, 0, pill_y, WIDTH, pill_height, pill_height / 2)
+        cr.set_source_rgba(*self.scale_alpha(self.theme.bg, pill_alpha))
+        cr.fill()
+
+        if bar_alpha > 0:
+            level = 0.0 if bars_locked else self.level
+            if self.visible_state == "transcribing":
+                self.draw_sweep(cr, pill_height, bar_alpha)
+            else:
+                self.draw_bars(cr, pill_height, bar_alpha, level)
+
+        return False
+
+    @staticmethod
+    def scale_alpha(color: tuple[float, float, float, float], alpha: float):
+        r, g, b, a = color
+        return r, g, b, clamp(a * alpha)
+
+    def draw_bars(self, cr, pill_height: float, bar_alpha: float, level: float):
+        max_h = max(pill_height - BAR_VPAD * 2.0, BAR_BASELINE + 2.0)
+        start_x = (WIDTH - BAR_BLOCK_W) / 2.0
+        cy = HEIGHT / 2.0
+
+        for i in range(BAR_COUNT):
+            taper = taper_factor(i, BAR_COUNT)
+            effective = clamp(level * taper)
+            height = max(BAR_BASELINE, BAR_BASELINE + effective * (max_h - BAR_BASELINE))
+            x = start_x + i * BAR_PITCH
+            y = cy - height / 2.0
+
+            if effective > 0.02:
+                glow_h = max(height + 2.0, BAR_BASELINE + 2.0)
+                rounded_rect(cr, x - 1, cy - glow_h / 2.0, BAR_W + 2, glow_h, (BAR_W + 2) / 2)
+                glow = self.theme.glow
+                glow_a = glow[3] * (effective * 0.9 + 0.1) * bar_alpha
+                cr.set_source_rgba(glow[0], glow[1], glow[2], clamp(glow_a))
+                cr.fill()
+
+            rounded_rect(cr, x, y, BAR_W, height, BAR_W / 2)
+            cr.set_source_rgba(*self.scale_alpha(self.theme.rec_bar, bar_alpha))
+            cr.fill()
+
+    def draw_sweep(self, cr, pill_height: float, bar_alpha: float):
+        max_h = max(pill_height - BAR_VPAD * 2.0, BAR_BASELINE + 2.0)
+        start_x = (WIDTH - BAR_BLOCK_W) / 2.0
+        cy = HEIGHT / 2.0
+        cycle = BAR_COUNT * 2 - 2
+        pos = (self.frame // 3) % max(1, cycle)
+        active = float(pos if pos < BAR_COUNT else cycle - pos)
+
+        for i in range(BAR_COUNT):
+            taper = taper_factor(i, BAR_COUNT)
+            distance = abs(i - active)
+            intensity = max(math.exp(-(distance * distance) / 4.0), 0.15)
+            dynamic = intensity * taper
+            height = max(BAR_BASELINE, BAR_BASELINE + dynamic * (max_h - BAR_BASELINE) * 0.85)
+            x = start_x + i * BAR_PITCH
+            y = cy - height / 2.0
+            color = self.theme.trans_bar
+            alpha = color[3] * (0.3 + 0.7 * intensity) * bar_alpha
+            rounded_rect(cr, x, y, BAR_W, height, BAR_W / 2)
+            cr.set_source_rgba(color[0], color[1], color[2], clamp(alpha))
+            cr.fill()
+
+
+def is_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def start_detached() -> int:
+    if PID_PATH.exists():
+        try:
+            pid = int(PID_PATH.read_text(encoding="utf-8").strip())
+        except Exception:
+            pid = 0
+        if pid and is_running(pid):
+            return 0
+
+    subprocess.Popen(
+        [sys.executable, __file__, "--run"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return 0
+
+
+def run() -> int:
+    PID_PATH.write_text(str(os.getpid()), encoding="utf-8")
+    try:
+        win = Overlay()
+        win.show_all()
+        win.hide()
+        Gtk.main()
+        return 0
+    finally:
+        PID_PATH.unlink(missing_ok=True)
+
+
+def main(argv: list[str]) -> int:
+    if argv == ["--run"]:
+        return run()
+    return start_detached()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

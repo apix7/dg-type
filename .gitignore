@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+*.pyo
+
+.DS_Store
+*.swp
+*.tmp
+
+dg-type.tar.gz
+*.tar.gz
+
+# Local binary copied from a development machine. Do not commit binary blobs.
+vendor/
+
+# Local credentials/config must never be committed.
+.env
+*.env
+config.yaml
+deepgram-api-key

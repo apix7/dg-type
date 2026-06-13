@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Deepgram Dictation Hotkey
+Comment=Toggle Deepgram dictation into the focused window
+Exec=@HOME@/.local/bin/dg-type-hotkey
+Icon=audio-input-microphone
+Terminal=false
+Categories=Utility;Accessibility;
+NoDisplay=false

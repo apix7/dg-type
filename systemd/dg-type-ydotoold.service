@@ -1,0 +1,14 @@
+[Unit]
+Description=dg-type ydotool daemon
+Documentation=https://github.com/ReimuNotMoe/ydotool
+After=user@@UID@.service
+Wants=user@@UID@.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/dg-type-ydotoold --socket-path=/run/user/@UID@/.ydotool_socket --socket-own=@UID@:@GID@ --socket-perm=0600
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
