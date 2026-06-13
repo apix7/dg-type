@@ -33,9 +33,19 @@ On Fedora Kinoite/Silverblue, install desktop/system packages with Flatpak/rpm-o
 
 ## Install
 
+From a local checkout:
+
 ```bash
 ./install.sh
 ```
+
+One-liner install from GitHub:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/YOU/dg-type/main/install-remote.sh | DG_TYPE_REPO_URL=https://github.com/YOU/dg-type.git bash
+```
+
+Replace `YOU` with your GitHub username or organization.
 
 Then verify:
 
