@@ -708,6 +708,11 @@ def language_for_deepgram(lang: str) -> str:
     return "multi" if lang == "auto" else lang
 
 
+def deepgram_keyterms() -> list[str]:
+    raw = os.environ.get("DG_TYPE_KEYTERMS", "")
+    return [term.strip() for term in raw.split(",") if term.strip()]
+
+
 def format_final_phrase(transcript: str) -> str:
     phrase = transcript.strip()
     if not phrase:
@@ -732,18 +737,7 @@ def build_deepgram_url(lang: str, model: str) -> str:
         ("no_delay", "true"),
     ]
 
-    keyterms = [
-        "appwrite",
-        "claude",
-        "claude code",
-        "docs",
-        "mcp",
-        "liviano",
-        "bikecheck",
-        "tmux",
-        "dev server",
-    ]
-    params.extend(("keyterm", term) for term in keyterms)
+    params.extend(("keyterm", term) for term in deepgram_keyterms())
 
     return "wss://api.deepgram.com/v1/listen?" + urlencode(params)
 

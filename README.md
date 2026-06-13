@@ -1,59 +1,58 @@
 # dg-type
 
-`dg-type` is a small Linux dictation tool that streams microphone audio to Deepgram and types the transcript into the focused window.
+`dg-type` is a Linux dictation helper that streams microphone audio to Deepgram and types the transcript into the currently focused window.
 
-It is designed for KDE/Wayland setups where normal Wayland text injection is restricted. It uses `ydotoold` for focused-window typing, supports a KDE hotkey wrapper, and includes a small whisrs-style recording overlay.
+It is built for KDE Plasma Wayland setups where normal text injection is blocked. The reliable path uses `ydotoold` for keyboard injection, plus a KDE hotkey wrapper and a small bottom-screen voice overlay.
 
 ## Features
 
-- Deepgram live transcription via WebSocket streaming
-- Live interim typing with correction/backspace rewriting
-- Focused-window text injection through `ydotool`
-- KDE shortcut wrapper
-- Bottom-screen voice indicator overlay
-- Root systemd service for `ydotoold` socket setup
-- Reuses credentials from the official `dg` / `deepctl` profile when available
+- Deepgram live WebSocket transcription
+- Low-latency interim typing with correction/backspace rewriting
+- Focused-window typing through `ydotool`
+- KDE shortcut launcher
+- Bottom-center voice activity overlay
+- Root systemd unit for persistent `ydotoold` socket setup
+- Deepgram credentials from the official `dg` / `deepctl` profile when available
 
 ## Requirements
 
 - Linux with systemd
-- Python 3.14 or compatible Python 3
+- Python 3.10 or newer
 - Deepgram API key
-- `ydotool` client in `PATH`
-- `ydotoold` available either:
-  - as `vendor/ydotoold`
-  - from the system `PATH`
-  - or via `DG_TYPE_YDOTOOLD=/path/to/ydotoold`
-- Python packages:
-  - `pyaudio`
-  - `websockets`
-  - optional for overlay: `python3-gobject`, `python3-cairo`, GTK 3
+- `ydotool` client available where `dg-type` runs
+- `ydotoold` binary available to install as the root daemon
+- Python packages: `pyaudio`, `websockets`
+- Optional overlay packages: GTK 3, PyGObject, PyCairo
 
-On Fedora Kinoite/Silverblue, install desktop/system packages with Flatpak/rpm-ostree only when needed. The installer only writes user files and a root systemd unit under `/etc/systemd/system`.
+On Fedora Kinoite/Silverblue, prefer running Python and CLI dependencies in distrobox. The installer does not layer rpm-ostree packages by itself.
 
 ## Install
 
-From a local checkout:
+Local checkout:
 
 ```bash
+git clone https://github.com/<owner>/dg-type.git
+cd dg-type
 ./install.sh
 ```
 
-One-liner install from GitHub:
+One-liner from GitHub:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOU/dg-type/main/install-remote.sh | DG_TYPE_REPO_URL=https://github.com/YOU/dg-type.git bash
+curl -fsSL https://raw.githubusercontent.com/<owner>/dg-type/main/install-remote.sh | DG_TYPE_REPO_URL=https://github.com/<owner>/dg-type.git bash
 ```
 
-Replace `YOU` with your GitHub username or organization.
+Replace `<owner>` with your GitHub username or organization.
 
-Then verify:
+The installer copies user commands to `~/.local/bin`, installs the desktop launcher, copies `ydotoold` to `/usr/local/bin/dg-type-ydotoold`, and enables `/etc/systemd/system/dg-type-ydotoold.service`.
+
+Verify:
 
 ```bash
 dg-type --check
 ```
 
-Expected:
+Expected result:
 
 ```text
 Deepgram key: found via ...
@@ -74,20 +73,19 @@ or use the official Deepgram CLI login flow.
 
 Fallbacks supported by `dg-type`:
 
-- `DEEPGRAM_API_KEY`
-- `~/.config/deepgram-api-key`
+```bash
+export DEEPGRAM_API_KEY=...
+```
 
-Do not commit API keys or Deepgram config files.
+```text
+~/.config/deepgram-api-key
+```
+
+Do not commit API keys, Deepgram config files, shell history containing keys, or `.env` files.
 
 ## Usage
 
-Final-only transcription:
-
-```bash
-dg-type
-```
-
-Low-latency live typing:
+Low-latency dictation:
 
 ```bash
 dg-type --live
@@ -99,11 +97,13 @@ Delay start so you can focus the target field:
 dg-type --live --delay 3
 ```
 
-Run again to stop an active dictation session:
+Final-only mode:
 
 ```bash
 dg-type
 ```
+
+Run `dg-type` again while it is listening to stop the active session.
 
 ## KDE Shortcut
 
@@ -126,6 +126,52 @@ You can also bind directly to:
 ~/.local/bin/dg-type-hotkey
 ```
 
+The hotkey wrapper uses live mode by default:
+
+```text
+dg-type --live --delay 0 --silence-timeout 15 --no-auto-setup
+```
+
+## Configuration
+
+Set these environment variables when needed:
+
+```bash
+DG_TYPE_DISTROBOX=fedora
+```
+
+Name of the distrobox container used by `dg-type-hotkey`. Default is `fedora`.
+
+```bash
+DG_TYPE_KEYTERMS="project name,technical term,person name"
+```
+
+Comma-separated Deepgram keyterms. Defaults to empty so the public package does not ship personal vocabulary.
+
+```bash
+DG_TYPE_YDOTOOLD=/path/to/ydotoold
+```
+
+Override the daemon binary used by `install.sh`.
+
+```bash
+DG_TYPE_OVERLAY_THEME=carbon
+```
+
+Overlay theme. Supported values: `carbon`, `ember`, `cyan`.
+
+```bash
+DG_TYPE_INSTALL_DIR=$HOME/.local/share/dg-type-src
+```
+
+Remote installer checkout path.
+
+```bash
+DG_TYPE_REPO_URL=https://github.com/<owner>/dg-type.git
+```
+
+Git repo URL used by `install-remote.sh`.
+
 ## Overlay
 
 The overlay is enabled by default. Disable it:
@@ -134,59 +180,71 @@ The overlay is enabled by default. Disable it:
 dg-type --no-overlay
 ```
 
-Theme options:
-
-```bash
-DG_TYPE_OVERLAY_THEME=carbon dg-type --live
-DG_TYPE_OVERLAY_THEME=ember dg-type --live
-DG_TYPE_OVERLAY_THEME=cyan dg-type --live
-```
-
 Overlay visuals and animation constants are adapted from [`y0sif/whisrs`](https://github.com/y0sif/whisrs), MIT License.
 
 ## Security Notes
 
-`ydotoold` runs as root so it can access `/dev/uinput`. This is required for reliable focused-window typing on KDE Wayland, but it means the daemon can inject keyboard events. Review `systemd/dg-type-ydotoold.service` before installing.
+`ydotoold` runs as root because it needs `/dev/uinput`. This is what makes focused-window typing reliable on KDE Wayland.
 
-The systemd unit creates a user-owned socket at:
+That also means the daemon can inject keyboard events. Review `systemd/dg-type-ydotoold.service` before installing and only expose the socket to your user.
+
+The systemd unit creates:
 
 ```text
 /run/user/<uid>/.ydotool_socket
 ```
 
-Only the installing user should be able to access it.
+The socket is installed with mode `0600` and owner `<uid>:<gid>`.
 
 ## Files
 
 ```text
-bin/dg-type                  main dictation command
-bin/dg-type-hotkey           KDE shortcut wrapper
-bin/dg-type-overlay          animated overlay
-desktop/dg-type-hotkey.desktop
-systemd/dg-type-ydotoold.service
-install.sh
+bin/dg-type                         main dictation command
+bin/dg-type-hotkey                  KDE shortcut wrapper
+bin/dg-type-overlay                 animated overlay
+desktop/dg-type-hotkey.desktop      launcher installed for KDE shortcuts
+systemd/dg-type-ydotoold.service    root daemon service template
+install.sh                          local installer
+install-remote.sh                   one-liner remote installer
 LICENSE
 ```
 
-`vendor/` is intentionally ignored by git. If you need to bundle `ydotoold` locally for your machine, place it at `vendor/ydotoold` before running `install.sh`.
+`vendor/` is ignored by git. If you need to use a local `ydotoold` binary for one machine, place it at `vendor/ydotoold` before running `install.sh`; do not commit it.
 
 ## Troubleshooting
 
-Check service:
+Check the daemon:
 
 ```bash
 sudo systemctl status dg-type-ydotoold.service --no-pager
 journalctl -u dg-type-ydotoold.service -b --no-pager
 ```
 
-Check socket:
+Check the socket:
 
 ```bash
 ls -l /run/user/$(id -u)/.ydotool_socket
 ```
 
-Check dictation:
+Check dependencies and injector:
 
 ```bash
 dg-type --check
 ```
+
+Check hotkey logs:
+
+```bash
+tail -n 100 ~/.cache/dg-type/hotkey.log
+```
+
+## Public Repo Checklist
+
+Before pushing:
+
+```bash
+git status --short --ignored
+rg -n --hidden --glob '!.git/**' --glob '!vendor/**' --glob '!README.md' 'DEEPGRAM_API_KEY=.+|/var/home|/home/|password\s*=|secret\s*=|Token [A-Za-z0-9]{10,}'
+```
+
+Only source files should be tracked. Credentials, logs, bytecode caches, tarballs, and local `vendor/` binaries should stay untracked or ignored.

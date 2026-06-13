@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_url="${DG_TYPE_REPO_URL:-https://github.com/YOUR_GITHUB_USERNAME/dg-type.git}"
+repo_url="${DG_TYPE_REPO_URL:-}"
 install_dir="${DG_TYPE_INSTALL_DIR:-$HOME/.local/share/dg-type-src}"
 
 need_cmd() {
@@ -25,22 +25,22 @@ Missing system dependencies. Install these first, then rerun this installer.
 Detected package manager: $pm
 
 Fedora / DNF:
-  sudo dnf install -y python3-pip python3-devel portaudio-devel ydotool python3-gobject python3-cairo gtk3
+  sudo dnf install -y git python3-pip python3-devel portaudio-devel ydotool python3-gobject python3-cairo gtk3
 
 Fedora Kinoite / Silverblue:
-  distrobox enter fedora -- sudo dnf install -y python3-pip python3-devel portaudio-devel ydotool python3-gobject python3-cairo gtk3
-  sudo rpm-ostree install ydotool
-  reboot
+  distrobox enter fedora -- sudo dnf install -y git python3-pip python3-devel portaudio-devel ydotool python3-gobject python3-cairo gtk3
+  # If you do not use distrobox for the hotkey wrapper, layer ydotool on the host:
+  # sudo rpm-ostree install ydotool && reboot
 
 Debian / Ubuntu:
   sudo apt-get update
-  sudo apt-get install -y python3-pip python3-dev portaudio19-dev ydotool python3-gi python3-cairo gir1.2-gtk-3.0
+  sudo apt-get install -y git python3-pip python3-dev portaudio19-dev ydotool python3-gi python3-cairo gir1.2-gtk-3.0
 
 Arch:
-  sudo pacman -S --needed python python-pip portaudio ydotool python-gobject gtk3
+  sudo pacman -S --needed git python python-pip portaudio ydotool python-gobject gtk3
 
 openSUSE:
-  sudo zypper install python3-pip python3-devel portaudio-devel ydotool python3-gobject python3-cairo gtk3
+  sudo zypper install git python3-pip python3-devel portaudio-devel ydotool python3-gobject python3-cairo gtk3
 EOF
 }
 
@@ -70,8 +70,15 @@ fetch_repo() {
   if need_cmd git; then
     if [[ -d "$install_dir/.git" ]]; then
       git -C "$install_dir" pull --ff-only
+    elif [[ -e "$install_dir" ]]; then
+      cat >&2 <<EOF
+Install directory already exists and is not a git checkout:
+  $install_dir
+
+Move it aside or set DG_TYPE_INSTALL_DIR to another path, then rerun.
+EOF
+      exit 1
     else
-      rm -rf "$install_dir"
       git clone "$repo_url" "$install_dir"
     fi
     return
@@ -83,12 +90,12 @@ fetch_repo() {
 }
 
 main() {
-  if [[ "$repo_url" == *"YOUR_GITHUB_USERNAME"* ]]; then
+  if [[ -z "$repo_url" ]]; then
     cat >&2 <<'EOF'
 Set DG_TYPE_REPO_URL to your repo before using the remote installer.
 
 Example:
-  curl -fsSL https://raw.githubusercontent.com/YOU/dg-type/main/install-remote.sh | DG_TYPE_REPO_URL=https://github.com/YOU/dg-type.git bash
+  curl -fsSL https://raw.githubusercontent.com/<owner>/dg-type/main/install-remote.sh | DG_TYPE_REPO_URL=https://github.com/<owner>/dg-type.git bash
 EOF
     exit 1
   fi

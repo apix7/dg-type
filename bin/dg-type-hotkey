@@ -10,6 +10,7 @@ fi
 
 log_dir="$HOME/.cache/dg-type"
 log_file="$log_dir/hotkey.log"
+distrobox_name="${DG_TYPE_DISTROBOX:-fedora}"
 mkdir -p "$log_dir"
 
 notify() {
@@ -25,7 +26,7 @@ run_direct() {
 }
 
 run_distrobox() {
-  "$HOME/.local/bin/distrobox-enter" --name fedora --no-tty -- \
+  "$HOME/.local/bin/distrobox-enter" --name "$distrobox_name" --no-tty -- \
     /usr/bin/env DG_TYPE_LOG_EVENTS=1 "$HOME/.local/bin/dg-type" \
       --live --delay 0 --silence-timeout 15 --no-auto-setup >>"$log_file" 2>&1
 }

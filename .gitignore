@@ -1,10 +1,13 @@
 __pycache__/
 *.py[cod]
 *.pyo
+.venv/
+venv/
 
 .DS_Store
 *.swp
 *.tmp
+*.log
 
 dg-type.tar.gz
 *.tar.gz
