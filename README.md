@@ -31,7 +31,7 @@ On Fedora Kinoite/Silverblue, prefer running Python and CLI dependencies in dist
 Local checkout:
 
 ```bash
-git clone https://github.com/<owner>/dg-type.git
+git clone https://github.com/apix7/dg-type.git
 cd dg-type
 ./install.sh
 ```
@@ -39,10 +39,8 @@ cd dg-type
 One-liner from GitHub:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<owner>/dg-type/main/install-remote.sh | DG_TYPE_REPO_URL=https://github.com/<owner>/dg-type.git bash
+curl -fsSL https://raw.githubusercontent.com/apix7/dg-type/main/install-remote.sh | DG_TYPE_REPO_URL=https://github.com/apix7/dg-type.git bash
 ```
-
-Replace `<owner>` with your GitHub username or organization.
 
 The installer copies user commands to `~/.local/bin`, installs the desktop launcher, copies `ydotoold` to `/usr/local/bin/dg-type-ydotoold`, and enables `/etc/systemd/system/dg-type-ydotoold.service`.
 
@@ -167,7 +165,7 @@ DG_TYPE_INSTALL_DIR=$HOME/.local/share/dg-type-src
 Remote installer checkout path.
 
 ```bash
-DG_TYPE_REPO_URL=https://github.com/<owner>/dg-type.git
+DG_TYPE_REPO_URL=https://github.com/apix7/dg-type.git
 ```
 
 Git repo URL used by `install-remote.sh`.

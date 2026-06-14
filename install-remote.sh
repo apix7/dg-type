@@ -95,7 +95,7 @@ main() {
 Set DG_TYPE_REPO_URL to your repo before using the remote installer.
 
 Example:
-  curl -fsSL https://raw.githubusercontent.com/<owner>/dg-type/main/install-remote.sh | DG_TYPE_REPO_URL=https://github.com/<owner>/dg-type.git bash
+  curl -fsSL https://raw.githubusercontent.com/apix7/dg-type/main/install-remote.sh | DG_TYPE_REPO_URL=https://github.com/apix7/dg-type.git bash
 EOF
     exit 1
   fi
